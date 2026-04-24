@@ -4,12 +4,17 @@ from typing import cast
 
 import pytest
 
+from smartour.api.routes.itineraries import (
+    _format_sse_event,
+    _job_event_payload,
+    _job_event_stream,
+)
 from smartour.application.itinerary_job_service import ItineraryJobService
 from smartour.application.planning_service import PlanningService
 from smartour.core.errors import PlanningInputError
 from smartour.domain.conversation import Conversation, ConversationState
 from smartour.domain.itinerary import Itinerary
-from smartour.domain.itinerary_job import ItineraryJobStatus
+from smartour.domain.itinerary_job import ItineraryJob, ItineraryJobStatus
 from smartour.domain.requirement import Travelers, TravelRequirement
 from smartour.infrastructure.repositories.conversations import (
     InMemoryConversationRepository,
@@ -58,6 +63,35 @@ class FakePlanningService:
         if self.error is not None:
             raise self.error
         return self.itinerary
+
+
+class FakeJobService:
+    """
+    Fake job service for SSE stream tests.
+    """
+
+    def __init__(self, job: ItineraryJob | None) -> None:
+        """
+        Initialize the fake job service.
+
+        Args:
+            job: The job returned by lookups.
+        """
+        self.job = job
+
+    def get_job(self, job_id: str) -> ItineraryJob | None:
+        """
+        Return the configured job.
+
+        Args:
+            job_id: The requested job ID.
+
+        Returns:
+            The configured job.
+        """
+        if self.job is None or self.job.id != job_id:
+            return None
+        return self.job
 
 
 def test_create_job_sets_conversation_planning_state() -> None:
@@ -185,6 +219,51 @@ def test_create_job_returns_none_for_missing_conversation() -> None:
     )
 
     assert service.create_job("missing") is None
+
+
+def test_job_event_payload_is_json_ready() -> None:
+    """
+    Verify that job event payloads expose polling-friendly status fields.
+    """
+    job = ItineraryJob(conversation_id="conv_1")
+    job.mark_succeeded("itin_1")
+
+    payload = _job_event_payload(job)
+
+    assert payload["job_id"] == job.id
+    assert payload["conversation_id"] == "conv_1"
+    assert payload["status"] == "succeeded"
+    assert payload["itinerary_id"] == "itin_1"
+    assert isinstance(payload["created_at"], str)
+    assert isinstance(payload["completed_at"], str)
+
+
+def test_format_sse_event_serializes_payload() -> None:
+    """
+    Verify that SSE events follow the event/data message shape.
+    """
+    event = _format_sse_event("itinerary_job", {"job_id": "job_1"})
+
+    assert event == 'event: itinerary_job\ndata: {"job_id":"job_1"}\n\n'
+
+
+@pytest.mark.asyncio
+async def test_job_event_stream_stops_after_terminal_status() -> None:
+    """
+    Verify that terminal jobs emit one event and close the stream.
+    """
+    job = ItineraryJob(conversation_id="conv_1")
+    job.mark_succeeded("itin_1")
+    service = FakeJobService(job)
+
+    events = [
+        event
+        async for event in _job_event_stream(job.id, cast(ItineraryJobService, service))
+    ]
+
+    assert len(events) == 1
+    assert "succeeded" in events[0]
+    assert "itin_1" in events[0]
 
 
 def _complete_requirement() -> TravelRequirement:
