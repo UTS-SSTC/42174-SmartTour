@@ -11,7 +11,12 @@ from smartour.application.planning_service import (
 )
 from smartour.core.errors import PlanningInputError
 from smartour.domain.conversation import Conversation
-from smartour.domain.itinerary import Coordinates, PlaceRecommendation
+from smartour.domain.itinerary import (
+    Coordinates,
+    ItineraryItem,
+    ItineraryItemType,
+    PlaceRecommendation,
+)
 from smartour.domain.requirement import Travelers, TravelRequirement
 from smartour.infrastructure.repositories.conversations import (
     InMemoryConversationRepository,
@@ -60,6 +65,7 @@ class FakePlacesClient:
         Initialize the fake Places client.
         """
         self.included_types: list[str | None] = []
+        self.detail_place_ids: list[str] = []
 
     async def search_text(
         self,
@@ -125,6 +131,41 @@ class FakePlacesClient:
                 ),
             ]
         return {"places": places[:page_size]}
+
+    async def get_place_details(
+        self,
+        place_id: str,
+        field_mask: str = "",
+        language_code: str | None = None,
+        region_code: str | None = None,
+    ) -> dict:
+        """
+        Return supplemental fake Place Details photos.
+
+        Args:
+            place_id: The Google place ID.
+            field_mask: The requested field mask.
+            language_code: The requested language code.
+            region_code: The requested region code.
+
+        Returns:
+            A fake Place Details response.
+        """
+        self.detail_place_ids.append(place_id)
+        return {
+            "photos": [
+                {
+                    "name": f"places/{place_id}/photos/main",
+                    "widthPx": 800,
+                    "heightPx": 600,
+                },
+                {
+                    "name": f"places/{place_id}/photos/detail",
+                    "widthPx": 900,
+                    "heightPx": 700,
+                },
+            ]
+        }
 
 
 class FakeRoutesClient:
@@ -220,6 +261,12 @@ async def test_planning_service_generates_structured_itinerary() -> None:
         "City Garden",
         "Ramen House",
     ]
+    assert itinerary.days[0].items[0].place.photos[0].name == (
+        "places/attraction_1/photos/main"
+    )
+    assert itinerary.days[0].items[0].place.photos[1].name == (
+        "places/attraction_1/photos/detail"
+    )
     assert "Remote Mountain" not in {
         item.place.name for item in itinerary.days[0].items
     }
@@ -237,6 +284,7 @@ async def test_planning_service_generates_structured_itinerary() -> None:
         "museum",
         None,
     ]
+    assert places_client.detail_place_ids == ["attraction_1"]
     assert await service.get_itinerary(itinerary.id) is not None
 
 
@@ -565,6 +613,36 @@ async def test_build_days_avoids_closed_attractions_when_dates_exist() -> None:
 
 
 @pytest.mark.asyncio
+async def test_supplement_daily_photos_fetches_missing_place_photos() -> None:
+    """
+    Verify that selected places without photos are hydrated from Place Details.
+    """
+    conversation_repository = InMemoryConversationRepository()
+    itinerary_repository = InMemoryItineraryRepository()
+    service = PlanningService(conversation_repository, itinerary_repository)
+    places_client = FakePlacesClient()
+    google_maps_client = GoogleMapsClient(
+        places=places_client,
+        routes=FakeRoutesClient(),
+        geocoding=FakeGeocodingClient(),
+        timezone=FakeTimeZoneClient(),
+    )
+    item = ItineraryItem(
+        time="10:00",
+        type=ItineraryItemType.ATTRACTION,
+        place=_recommendation("missing_photo", "No Photo Place", "museum", 35.7, 139.7),
+        duration_minutes=90,
+    )
+
+    await service._supplement_daily_photos(
+        [item], _complete_requirement(), google_maps_client, {}
+    )
+
+    assert places_client.detail_place_ids == ["missing_photo"]
+    assert item.place.photos[0].name == "places/missing_photo/photos/main"
+
+
+@pytest.mark.asyncio
 async def test_planning_service_rejects_incomplete_requirements() -> None:
     """
     Verify that planning does not run with missing required slots.
@@ -642,6 +720,13 @@ def _place(
         "priceLevel": "PRICE_LEVEL_MODERATE",
         "businessStatus": "OPERATIONAL",
         "types": [type_name, "point_of_interest"],
+        "photos": [
+            {
+                "name": f"places/{place_id}/photos/main",
+                "widthPx": 800,
+                "heightPx": 600,
+            }
+        ],
     }
 
 

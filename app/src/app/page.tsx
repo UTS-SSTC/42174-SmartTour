@@ -10,11 +10,13 @@ import {
   Check,
   ChevronDown,
   Clock,
+  ExternalLink,
   Footprints,
   Hotel,
   LoaderCircle,
   Moon,
   MoreHorizontal,
+  Navigation,
   Send,
   Ship,
   Sparkles,
@@ -34,11 +36,13 @@ import {
   type ItineraryDay,
   type ItineraryItem,
   type ItineraryJob,
+  type PlaceRecommendation,
   type RouteLeg,
   type TravelRequirement,
   sendConversationMessage,
 } from "@/lib/smartourApi";
-import { RouteMap } from "@/components/RouteMap";
+import { DailyPhotoGallery } from "@/components/DailyPhotoGallery";
+import { RouteLegMap } from "@/components/RouteMap";
 import styles from "./page.module.css";
 
 const DEFAULT_PROMPT =
@@ -59,6 +63,16 @@ type RequirementRow = {
   value: string;
 };
 
+type RouteStep = {
+  category: string;
+  destination: PlaceRecommendation | null;
+  durationMinutes: number | null;
+  leg: RouteLeg | null;
+  origin: PlaceRecommendation | null;
+  time: string;
+  title: string;
+};
+
 /**
  * Render the Smartour frontend application.
  *
@@ -75,6 +89,9 @@ export default function Home() {
   const [job, setJob] = useState<ItineraryJob | null>(null);
   const [itinerary, setItinerary] = useState<Itinerary | null>(null);
   const [activeDayIndex, setActiveDayIndex] = useState(0);
+  const [expandedRouteIndex, setExpandedRouteIndex] = useState<number | null>(
+    null,
+  );
   const [isSending, setIsSending] = useState(false);
   const [isPlanning, setIsPlanning] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -89,10 +106,15 @@ export default function Home() {
   }, []);
 
   const activeDay = itinerary?.days[activeDayIndex] ?? null;
+  const primaryHotel = itinerary?.hotels[0] ?? null;
   const requirement = conversation?.requirement_snapshot ?? null;
   const requirementRows = useMemo(
     () => buildRequirementRows(requirement),
     [requirement],
+  );
+  const routeSteps = useMemo(
+    () => buildRouteSteps(activeDay, primaryHotel),
+    [activeDay, primaryHotel],
   );
   const routeTotals = useMemo(() => summarizeRoutes(itinerary), [itinerary]);
   const canConfirm =
@@ -157,6 +179,7 @@ export default function Home() {
       const generatedItinerary = await pollJobUntilComplete(queuedJob.id);
       setItinerary(generatedItinerary);
       setActiveDayIndex(0);
+      setExpandedRouteIndex(null);
       appendMessage("assistant", `${generatedItinerary.title} is ready.`);
     } catch (error) {
       handleRequestError(error);
@@ -265,6 +288,7 @@ export default function Home() {
               setConversation(null);
               setJob(null);
               setItinerary(null);
+              setExpandedRouteIndex(null);
               setInputValue(DEFAULT_PROMPT);
               setErrorMessage(null);
             }}
@@ -397,7 +421,10 @@ export default function Home() {
                     index === activeDayIndex ? styles.active : ""
                   }`}
                   key={`${day.day_number}-${day.theme}`}
-                  onClick={() => setActiveDayIndex(index)}
+                  onClick={() => {
+                    setActiveDayIndex(index);
+                    setExpandedRouteIndex(null);
+                  }}
                   role="tab"
                   type="button"
                 >
@@ -407,20 +434,25 @@ export default function Home() {
             )}
           </div>
 
-          <RouteMap activeDay={activeDay} isPlanning={isPlanning} />
+          <DailyPhotoGallery activeDay={activeDay} isPlanning={isPlanning} />
 
           <div>
             <h2 className={styles.routeStopsTitle}>Route stops</h2>
             <div className={styles.routeList}>
-              {activeDay === null ? (
+              {activeDay === null || routeSteps.length === 0 ? (
                 <EmptyRouteState isPlanning={isPlanning} />
               ) : (
-                activeDay.items.map((item, index) => (
-                  <RouteItemRow
+                routeSteps.map((step, index) => (
+                  <RouteStepRow
                     index={index}
-                    item={item}
-                    key={`${item.place.place_id}-${item.time}`}
-                    leg={activeDay.route?.legs[index] ?? null}
+                    isExpanded={expandedRouteIndex === index}
+                    key={`${step.title}-${step.time}-${index}`}
+                    onToggle={() =>
+                      setExpandedRouteIndex((currentIndex) =>
+                        currentIndex === index ? null : index,
+                      )
+                    }
+                    step={step}
                   />
                 ))
               )}
@@ -630,42 +662,98 @@ function EmptyRouteState({ isPlanning }: EmptyRouteStateProps) {
   );
 }
 
-type RouteItemRowProps = {
+type RouteStepRowProps = {
   index: number;
-  item: ItineraryItem;
-  leg: RouteLeg | null;
+  isExpanded: boolean;
+  onToggle: () => void;
+  step: RouteStep;
 };
 
 /**
- * Render one itinerary item row with route leg details.
+ * Render one itinerary route step with expandable navigation.
  *
- * @param props - The route item row props.
- * @returns A route item row element.
+ * @param props - The route step row props.
+ * @returns A route step row element.
  */
-function RouteItemRow({ index, item, leg }: RouteItemRowProps) {
+function RouteStepRow({
+  index,
+  isExpanded,
+  onToggle,
+  step,
+}: RouteStepRowProps) {
+  const directionsUrl = buildGoogleMapsDirectionsUrl(step);
   return (
-    <div className={styles.routeItem}>
-      <div className={styles.routeNumber}>{index + 1}</div>
-      <div>
-        <div className={styles.routePlaceName}>{item.place.name}</div>
-        <div className={styles.routeAddress}>
-          {item.place.address ?? item.place.category}
+    <div className={styles.routeItemGroup}>
+      <button
+        aria-expanded={isExpanded}
+        className={styles.routeItem}
+        onClick={onToggle}
+        type="button"
+      >
+        <div className={styles.routeNumber}>{index + 1}</div>
+        <div>
+          <div className={styles.routePlaceName}>{step.title}</div>
+          <div className={styles.routeAddress}>
+            {step.destination?.address ?? step.category}
+          </div>
         </div>
-      </div>
-      <div className={styles.routeTime}>
-        <span>{item.time}</span>
-        <span>{item.duration_minutes} min</span>
-      </div>
-      <div className={styles.routeTransit}>
-        <div className={styles.routeTransitIcon}>
-          {renderTravelIcon(leg?.travel_mode ?? "walk")}
-          {formatDuration(leg?.duration_seconds ?? 0)}
+        <div className={styles.routeTime}>
+          <span>{step.time}</span>
+          <span>{formatVisitDuration(step.durationMinutes)}</span>
         </div>
-        <div className={styles.badgeSmall}>
-          {formatTravelMode(leg?.travel_mode)}
+        <div className={styles.routeTransit}>
+          <div className={styles.routeTransitIcon}>
+            {renderTravelIcon(step.leg?.travel_mode ?? "walk")}
+            {formatDuration(step.leg?.duration_seconds ?? 0)}
+          </div>
+          <div className={styles.badgeSmall}>
+            {formatTravelMode(step.leg?.travel_mode)}
+          </div>
+          <ChevronDown
+            className={`${styles.routeChevron} ${
+              isExpanded ? styles.routeChevronOpen : ""
+            }`}
+            size={16}
+          />
         </div>
-        <ChevronDown size={16} />
-      </div>
+      </button>
+      {isExpanded ? (
+        <div className={styles.routeExpanded}>
+          <div className={styles.routeLegHeader}>
+            <div className={styles.routeLegEndpoint}>
+              <Navigation size={14} />
+              <span>{formatRouteEndpoint(step.origin)}</span>
+              <span className={styles.routeLegArrow}>to</span>
+              <span>{formatRouteEndpoint(step.destination)}</span>
+            </div>
+            <div className={styles.routeLegMetrics}>
+              <span>{formatDistance(step.leg?.distance_meters ?? 0)}</span>
+              <span>{formatDuration(step.leg?.duration_seconds ?? 0)}</span>
+            </div>
+          </div>
+          <RouteLegMap
+            destination={step.destination}
+            leg={step.leg}
+            origin={step.origin}
+          />
+          <div className={styles.routeLegActions}>
+            {directionsUrl !== null ? (
+              <a
+                className={styles.directionsLink}
+                href={directionsUrl}
+                rel="noreferrer"
+                target="_blank"
+              >
+                <Navigation size={14} />
+                Open navigation
+                <ExternalLink size={14} />
+              </a>
+            ) : (
+              <span className="text-secondary">Navigation unavailable</span>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -982,6 +1070,200 @@ function selectRestaurants(
 }
 
 /**
+ * Build route steps for the active day, including the return leg when present.
+ *
+ * @param day - The active itinerary day.
+ * @param primaryHotel - The hotel used as the daily route anchor.
+ * @returns Expandable route steps.
+ */
+function buildRouteSteps(
+  day: ItineraryDay | null,
+  primaryHotel: PlaceRecommendation | null,
+): RouteStep[] {
+  if (day === null) {
+    return [];
+  }
+  const placeLookup = buildRoutePlaceLookup(day, primaryHotel);
+  const steps = day.items.map((item, index) =>
+    buildItemRouteStep(day, item, index, primaryHotel, placeLookup),
+  );
+  const returnLeg = day.route?.legs[day.items.length] ?? null;
+  if (returnLeg !== null) {
+    steps.push(buildReturnRouteStep(day, returnLeg, primaryHotel, placeLookup));
+  }
+  return steps;
+}
+
+/**
+ * Build a place lookup for route leg origin and destination IDs.
+ *
+ * @param day - The active itinerary day.
+ * @param primaryHotel - The hotel used as the daily route anchor.
+ * @returns A lookup keyed by Google place ID.
+ */
+function buildRoutePlaceLookup(
+  day: ItineraryDay,
+  primaryHotel: PlaceRecommendation | null,
+): Map<string, PlaceRecommendation> {
+  const placeLookup = new Map<string, PlaceRecommendation>();
+  if (primaryHotel !== null) {
+    placeLookup.set(primaryHotel.place_id, primaryHotel);
+  }
+  for (const item of day.items) {
+    placeLookup.set(item.place.place_id, item.place);
+  }
+  return placeLookup;
+}
+
+/**
+ * Build an expandable route step for a scheduled itinerary item.
+ *
+ * @param day - The active itinerary day.
+ * @param item - The scheduled itinerary item.
+ * @param index - The item index.
+ * @param primaryHotel - The hotel used as the daily route anchor.
+ * @param placeLookup - The place lookup keyed by Google place ID.
+ * @returns An expandable route step.
+ */
+function buildItemRouteStep(
+  day: ItineraryDay,
+  item: ItineraryItem,
+  index: number,
+  primaryHotel: PlaceRecommendation | null,
+  placeLookup: Map<string, PlaceRecommendation>,
+): RouteStep {
+  const leg = day.route?.legs[index] ?? null;
+  const fallbackOrigin =
+    index === 0 ? primaryHotel : (day.items[index - 1]?.place ?? null);
+  return {
+    category: item.type,
+    destination:
+      leg === null
+        ? item.place
+        : (placeLookup.get(leg.destination_place_id) ?? item.place),
+    durationMinutes: item.duration_minutes,
+    leg,
+    origin:
+      leg === null
+        ? fallbackOrigin
+        : (placeLookup.get(leg.origin_place_id) ?? fallbackOrigin),
+    time: item.time,
+    title: item.place.name,
+  };
+}
+
+/**
+ * Build an expandable route step for the return to the hotel.
+ *
+ * @param day - The active itinerary day.
+ * @param leg - The return route leg.
+ * @param primaryHotel - The hotel used as the daily route anchor.
+ * @param placeLookup - The place lookup keyed by Google place ID.
+ * @returns An expandable route step.
+ */
+function buildReturnRouteStep(
+  day: ItineraryDay,
+  leg: RouteLeg,
+  primaryHotel: PlaceRecommendation | null,
+  placeLookup: Map<string, PlaceRecommendation>,
+): RouteStep {
+  const lastItem = day.items[day.items.length - 1] ?? null;
+  const destination = placeLookup.get(leg.destination_place_id) ?? primaryHotel;
+  return {
+    category: "return",
+    destination,
+    durationMinutes: null,
+    leg,
+    origin: placeLookup.get(leg.origin_place_id) ?? lastItem?.place ?? null,
+    time: "Return",
+    title:
+      destination === null
+        ? "Return to hotel"
+        : `Return to ${destination.name}`,
+  };
+}
+
+/**
+ * Build a Google Maps Directions URL for one route step.
+ *
+ * @param step - The route step to navigate.
+ * @returns A Google Maps directions URL when endpoints are available.
+ */
+function buildGoogleMapsDirectionsUrl(step: RouteStep): string | null {
+  if (step.origin === null || step.destination === null) {
+    return null;
+  }
+  const url = new URL("https://www.google.com/maps/dir/");
+  url.searchParams.set("api", "1");
+  url.searchParams.set("origin", formatPlaceForDirections(step.origin));
+  url.searchParams.set(
+    "destination",
+    formatPlaceForDirections(step.destination),
+  );
+  url.searchParams.set("origin_place_id", step.origin.place_id);
+  url.searchParams.set("destination_place_id", step.destination.place_id);
+  const travelMode = googleMapsTravelMode(step.leg?.travel_mode);
+  if (travelMode !== null) {
+    url.searchParams.set("travelmode", travelMode);
+  }
+  return url.toString();
+}
+
+/**
+ * Format a place as a Google Maps directions endpoint.
+ *
+ * @param place - The route endpoint place.
+ * @returns A directions endpoint string.
+ */
+function formatPlaceForDirections(place: PlaceRecommendation): string {
+  if (place.address !== null) {
+    return `${place.name}, ${place.address}`;
+  }
+  if (place.location !== null) {
+    return `${place.location.latitude},${place.location.longitude}`;
+  }
+  return place.name;
+}
+
+/**
+ * Convert backend travel modes to Google Maps URL travel modes.
+ *
+ * @param travelMode - The backend travel mode.
+ * @returns A Google Maps URL travel mode when known.
+ */
+function googleMapsTravelMode(
+  travelMode: string | null | undefined,
+): string | null {
+  if (!travelMode) {
+    return null;
+  }
+  const normalizedMode = travelMode.toLowerCase();
+  if (normalizedMode.includes("transit")) {
+    return "transit";
+  }
+  if (normalizedMode.includes("walk")) {
+    return "walking";
+  }
+  if (normalizedMode.includes("bicycl")) {
+    return "bicycling";
+  }
+  if (normalizedMode.includes("drive")) {
+    return "driving";
+  }
+  return null;
+}
+
+/**
+ * Format a route endpoint for display.
+ *
+ * @param place - The route endpoint place.
+ * @returns A readable route endpoint.
+ */
+function formatRouteEndpoint(place: PlaceRecommendation | null): string {
+  return place?.name ?? "Unknown place";
+}
+
+/**
  * Format a route distance.
  *
  * @param meters - The route distance in meters.
@@ -1016,6 +1298,19 @@ function formatDuration(seconds: number): string {
   return remainingMinutes === 0
     ? `${hours} hr`
     : `${hours} hr ${remainingMinutes} min`;
+}
+
+/**
+ * Format scheduled stop duration.
+ *
+ * @param durationMinutes - The scheduled duration in minutes.
+ * @returns A readable stop duration.
+ */
+function formatVisitDuration(durationMinutes: number | null): string {
+  if (durationMinutes === null) {
+    return "-";
+  }
+  return `${durationMinutes} min`;
 }
 
 /**

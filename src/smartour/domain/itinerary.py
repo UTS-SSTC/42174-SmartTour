@@ -50,6 +50,16 @@ class Coordinates(BaseModel):
     longitude: float = Field(ge=-180, le=180)
 
 
+class PlacePhoto(BaseModel):
+    """
+    A Google Places photo resource attached to a recommended place.
+    """
+
+    name: str
+    width_px: int | None = None
+    height_px: int | None = None
+
+
 class PlaceRecommendation(BaseModel):
     """
     A normalized recommended place from Google Maps Platform.
@@ -65,6 +75,7 @@ class PlaceRecommendation(BaseModel):
     user_rating_count: int | None = None
     price_level: str | None = None
     types: list[str] = Field(default_factory=list)
+    photos: list[PlacePhoto] = Field(default_factory=list)
     regular_opening_hours: dict[str, Any] | None = None
     current_opening_hours: dict[str, Any] | None = None
     score: float = 0.0

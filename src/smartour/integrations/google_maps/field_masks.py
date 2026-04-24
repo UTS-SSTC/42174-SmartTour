@@ -7,12 +7,15 @@ PLACES_RECOMMENDATION_FIELD_MASK = (
     "places.id,places.displayName,places.formattedAddress,places.location,"
     "places.googleMapsUri,places.rating,places.userRatingCount,places.priceLevel,"
     "places.businessStatus,places.types,places.regularOpeningHours,"
-    "places.currentOpeningHours"
+    "places.currentOpeningHours,places.photos.name,places.photos.widthPx,"
+    "places.photos.heightPx"
 )
 PLACES_DETAILS_FIELD_MASK = (
     "id,displayName,formattedAddress,location,googleMapsUri,rating,userRatingCount,"
-    "priceLevel,regularOpeningHours,currentOpeningHours,businessStatus,types"
+    "priceLevel,regularOpeningHours,currentOpeningHours,businessStatus,types,"
+    "photos.name,photos.widthPx,photos.heightPx"
 )
+PLACES_PHOTO_DETAILS_FIELD_MASK = "photos.name,photos.widthPx,photos.heightPx"
 ROUTES_SUMMARY_FIELD_MASK = (
     "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline"
 )

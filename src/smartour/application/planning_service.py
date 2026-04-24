@@ -12,6 +12,7 @@ from smartour.domain.itinerary import (
     ItineraryDay,
     ItineraryItem,
     ItineraryItemType,
+    PlacePhoto,
     PlaceRecommendation,
     RouteLeg,
     RouteSummary,
@@ -19,6 +20,7 @@ from smartour.domain.itinerary import (
 from smartour.domain.requirement import TravelRequirement
 from smartour.integrations.google_maps.client import GoogleMapsClient
 from smartour.integrations.google_maps.field_masks import (
+    PLACES_PHOTO_DETAILS_FIELD_MASK,
     PLACES_RECOMMENDATION_FIELD_MASK,
 )
 
@@ -87,6 +89,7 @@ DAILY_ROUTE_DISTANCE_LIMITS_METERS = {
 ATTRACTION_TIME_SLOTS = ["10:00", "14:00", "16:15"]
 LUNCH_TIME = "12:15"
 DINNER_TIME = "18:30"
+GALLERY_MIN_PHOTO_COUNT = 5
 OPENING_HOURS_DAY_OFFSET = 1
 THEME_TYPE_WEIGHT = 3.0
 THEME_TEXT_WEIGHT = 1.25
@@ -738,6 +741,7 @@ class PlanningService:
         ranked_restaurants = _nearby_ranked_places(
             primary_hotel, restaurants, requirement
         )
+        photo_details_cache: dict[str, list[PlacePhoto]] = {}
         used_attraction_ids: set[str] = set()
         used_restaurant_ids: set[str] = set()
         days: list[ItineraryDay] = []
@@ -789,6 +793,12 @@ class PlanningService:
                     [item.place for item in items],
                     google_maps_client,
                 )
+            await self._supplement_daily_photos(
+                items,
+                requirement,
+                google_maps_client,
+                photo_details_cache,
+            )
             for attraction in day_attractions:
                 used_attraction_ids.add(attraction.place_id)
             used_restaurant_ids.add(lunch.place_id)
@@ -804,6 +814,73 @@ class PlanningService:
                 )
             )
         return days
+
+    async def _supplement_daily_photos(
+        self,
+        items: list[ItineraryItem],
+        requirement: TravelRequirement,
+        google_maps_client: GoogleMapsClient,
+        photo_details_cache: dict[str, list[PlacePhoto]],
+    ) -> None:
+        """
+        Hydrate selected places with additional photo references for the gallery.
+
+        Args:
+            items: The scheduled itinerary items for one day.
+            requirement: The confirmed travel requirement snapshot.
+            google_maps_client: The Google Maps client group.
+            photo_details_cache: Place photo details loaded during this planning run.
+        """
+        if _daily_photo_count(items) >= GALLERY_MIN_PHOTO_COUNT and all(
+            item.place.photos for item in items
+        ):
+            return
+        for item in items:
+            if item.place.photos:
+                continue
+            await self._supplement_place_photos(
+                item.place,
+                requirement,
+                google_maps_client,
+                photo_details_cache,
+            )
+        if _daily_photo_count(items) >= GALLERY_MIN_PHOTO_COUNT:
+            return
+        for item in items:
+            if _daily_photo_count(items) >= GALLERY_MIN_PHOTO_COUNT:
+                return
+            await self._supplement_place_photos(
+                item.place,
+                requirement,
+                google_maps_client,
+                photo_details_cache,
+            )
+
+    async def _supplement_place_photos(
+        self,
+        place: PlaceRecommendation,
+        requirement: TravelRequirement,
+        google_maps_client: GoogleMapsClient,
+        photo_details_cache: dict[str, list[PlacePhoto]],
+    ) -> None:
+        """
+        Hydrate one selected place with photo references from Place Details.
+
+        Args:
+            place: The selected place to hydrate.
+            requirement: The confirmed travel requirement snapshot.
+            google_maps_client: The Google Maps client group.
+            photo_details_cache: Place photo details loaded during this planning run.
+        """
+        place_id = place.place_id
+        if place_id not in photo_details_cache:
+            payload = await google_maps_client.places.get_place_details(
+                place_id=place_id,
+                field_mask=PLACES_PHOTO_DETAILS_FIELD_MASK,
+                language_code=requirement.language,
+            )
+            photo_details_cache[place_id] = _photos_from_google_payload(payload)
+        place.photos = _merge_place_photos(place.photos, photo_details_cache[place_id])
 
     async def _build_route_summary(
         self,
@@ -1013,11 +1090,81 @@ def _place_from_google_payload(
         user_rating_count=payload.get("userRatingCount"),
         price_level=payload.get("priceLevel"),
         types=payload.get("types") or [],
+        photos=_photos_from_google_payload(payload),
         regular_opening_hours=payload.get("regularOpeningHours"),
         current_opening_hours=payload.get("currentOpeningHours"),
     )
     place.score = _score_place(place, requirement)
     return place
+
+
+def _photos_from_google_payload(payload: dict[str, Any]) -> list[PlacePhoto]:
+    """
+    Normalize Google Places photo resources.
+
+    Args:
+        payload: The Google Place payload.
+
+    Returns:
+        Normalized photo resources.
+    """
+    photos = payload.get("photos")
+    if not isinstance(photos, list):
+        return []
+    normalized_photos: list[PlacePhoto] = []
+    for photo in photos:
+        if not isinstance(photo, dict):
+            continue
+        photo_name = photo.get("name")
+        if not photo_name:
+            continue
+        normalized_photos.append(
+            PlacePhoto(
+                name=str(photo_name),
+                width_px=photo.get("widthPx"),
+                height_px=photo.get("heightPx"),
+            )
+        )
+    return normalized_photos
+
+
+def _daily_photo_count(items: list[ItineraryItem]) -> int:
+    """
+    Count unique photo resources available for one scheduled day.
+
+    Args:
+        items: The scheduled itinerary items.
+
+    Returns:
+        The unique photo resource count.
+    """
+    photo_names = {
+        photo.name for item in items for photo in item.place.photos if photo.name
+    }
+    return len(photo_names)
+
+
+def _merge_place_photos(
+    current_photos: list[PlacePhoto], new_photos: list[PlacePhoto]
+) -> list[PlacePhoto]:
+    """
+    Merge place photos by Google photo resource name.
+
+    Args:
+        current_photos: The photos already attached to the place.
+        new_photos: The supplemental photos returned by Place Details.
+
+    Returns:
+        The merged photo list preserving first-seen order.
+    """
+    merged_photos = list(current_photos)
+    seen_photo_names = {photo.name for photo in merged_photos}
+    for photo in new_photos:
+        if photo.name in seen_photo_names:
+            continue
+        merged_photos.append(photo)
+        seen_photo_names.add(photo.name)
+    return merged_photos
 
 
 def _merge_unique_places(

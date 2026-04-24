@@ -65,6 +65,15 @@ export type Coordinates = {
 };
 
 /**
+ * Google Places photo resource returned for a place.
+ */
+export type PlacePhoto = {
+  name: string;
+  width_px: number | null;
+  height_px: number | null;
+};
+
+/**
  * Normalized place recommendation returned by the itinerary planner.
  */
 export type PlaceRecommendation = {
@@ -78,6 +87,7 @@ export type PlaceRecommendation = {
   user_rating_count: number | null;
   price_level: string | null;
   types: string[];
+  photos: PlacePhoto[];
   regular_opening_hours: Record<string, unknown> | null;
   current_opening_hours: Record<string, unknown> | null;
   score: number;
