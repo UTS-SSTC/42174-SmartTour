@@ -19,6 +19,8 @@ class ItineraryJobService:
         conversation_repository: Any,
         job_repository: Any,
         planning_service: PlanningService,
+        conversation_rate_limiter: Any | None = None,
+        ip_rate_limiter: Any | None = None,
         rate_limiter: Any | None = None,
     ) -> None:
         """
@@ -28,12 +30,15 @@ class ItineraryJobService:
             conversation_repository: Repository used to update conversation state.
             job_repository: Repository used to persist job state.
             planning_service: Planning service used to generate itineraries.
-            rate_limiter: Optional rate limiter for job creation.
+            conversation_rate_limiter: Optional limiter for conversation job creation.
+            ip_rate_limiter: Optional limiter for client IP job creation.
+            rate_limiter: Backward-compatible limiter used for both scopes.
         """
         self.conversation_repository = conversation_repository
         self.job_repository = job_repository
         self.planning_service = planning_service
-        self.rate_limiter = rate_limiter
+        self.conversation_rate_limiter = conversation_rate_limiter or rate_limiter
+        self.ip_rate_limiter = ip_rate_limiter or rate_limiter
 
     async def create_job(
         self, conversation_id: str, client_host: str | None = None
@@ -80,13 +85,17 @@ class ItineraryJobService:
             conversation_id: The source conversation ID.
             client_host: The request client host when available.
         """
-        if self.rate_limiter is None:
-            return
-        await self.rate_limiter.check_and_record(
-            "conversation", conversation_id, "itinerary_job"
-        )
+        checks = [
+            (self.conversation_rate_limiter, "conversation", conversation_id),
+        ]
         if client_host:
-            await self.rate_limiter.check_and_record("ip", client_host, "itinerary_job")
+            checks.append((self.ip_rate_limiter, "ip", client_host))
+        for rate_limiter, scope, subject_key in checks:
+            if rate_limiter is not None:
+                await rate_limiter.check_allowed(scope, subject_key, "itinerary_job")
+        for rate_limiter, scope, subject_key in checks:
+            if rate_limiter is not None:
+                await rate_limiter.record(scope, subject_key, "itinerary_job")
 
     async def get_job(self, job_id: str) -> ItineraryJob | None:
         """

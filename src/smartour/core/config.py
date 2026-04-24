@@ -2,7 +2,7 @@
 
 from typing import Self
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,8 +28,15 @@ class Settings(BaseSettings):
     google_maps_routes_cache_ttl_seconds: int = Field(
         default=0, validation_alias="GOOGLE_MAPS_ROUTES_CACHE_TTL_SECONDS"
     )
-    itinerary_job_rate_limit_count: int = Field(
-        default=5, validation_alias="ITINERARY_JOB_RATE_LIMIT_COUNT"
+    itinerary_job_conversation_rate_limit_count: int = Field(
+        default=5,
+        validation_alias=AliasChoices(
+            "ITINERARY_JOB_CONVERSATION_RATE_LIMIT_COUNT",
+            "ITINERARY_JOB_RATE_LIMIT_COUNT",
+        ),
+    )
+    itinerary_job_ip_rate_limit_count: int = Field(
+        default=50, validation_alias="ITINERARY_JOB_IP_RATE_LIMIT_COUNT"
     )
     itinerary_job_rate_limit_window_seconds: int = Field(
         default=3600, validation_alias="ITINERARY_JOB_RATE_LIMIT_WINDOW_SECONDS"

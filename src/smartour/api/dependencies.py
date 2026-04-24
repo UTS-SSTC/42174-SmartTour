@@ -100,17 +100,33 @@ def get_google_api_store() -> SQLiteGoogleApiStore:
 
 
 @lru_cache
-def get_rate_limiter() -> SimpleRateLimiter:
+def get_conversation_rate_limiter() -> SimpleRateLimiter:
     """
-    Create the itinerary generation rate limiter.
+    Create the conversation-scoped itinerary generation rate limiter.
 
     Returns:
-        The SQLite-backed rate limiter.
+        The SQLite-backed conversation rate limiter.
     """
     settings = get_settings()
     return SimpleRateLimiter(
         store=SQLiteRateLimitStore(get_database()),
-        max_events=settings.itinerary_job_rate_limit_count,
+        max_events=settings.itinerary_job_conversation_rate_limit_count,
+        window_seconds=settings.itinerary_job_rate_limit_window_seconds,
+    )
+
+
+@lru_cache
+def get_ip_rate_limiter() -> SimpleRateLimiter:
+    """
+    Create the client IP-scoped itinerary generation rate limiter.
+
+    Returns:
+        The SQLite-backed client IP rate limiter.
+    """
+    settings = get_settings()
+    return SimpleRateLimiter(
+        store=SQLiteRateLimitStore(get_database()),
+        max_events=settings.itinerary_job_ip_rate_limit_count,
         window_seconds=settings.itinerary_job_rate_limit_window_seconds,
     )
 
@@ -177,7 +193,8 @@ def get_itinerary_job_service() -> ItineraryJobService:
         conversation_repository=get_conversation_repository(),
         job_repository=get_itinerary_job_repository(),
         planning_service=get_planning_service(),
-        rate_limiter=get_rate_limiter(),
+        conversation_rate_limiter=get_conversation_rate_limiter(),
+        ip_rate_limiter=get_ip_rate_limiter(),
     )
 
 

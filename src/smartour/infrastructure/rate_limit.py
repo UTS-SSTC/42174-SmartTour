@@ -126,10 +126,37 @@ class SimpleRateLimiter:
         Raises:
             RateLimitError: Raised when the limit has been exceeded.
         """
+        await self.check_allowed(scope, subject_key, event_name)
+        await self.record(scope, subject_key, event_name)
+
+    async def check_allowed(
+        self, scope: str, subject_key: str, event_name: str
+    ) -> None:
+        """
+        Enforce a fixed-window rate limit without recording an event.
+
+        Args:
+            scope: The rate limit scope.
+            subject_key: The scoped subject key.
+            event_name: The event name.
+
+        Raises:
+            RateLimitError: Raised when the limit has been exceeded.
+        """
         cutoff = _utc_now() - timedelta(seconds=self.window_seconds)
         event_count = await self.store.count_events_since(
             scope, subject_key, event_name, cutoff
         )
         if event_count >= self.max_events:
             raise RateLimitError("Too many itinerary generation requests")
+
+    async def record(self, scope: str, subject_key: str, event_name: str) -> None:
+        """
+        Record a permitted rate limit event.
+
+        Args:
+            scope: The rate limit scope.
+            subject_key: The scoped subject key.
+            event_name: The event name.
+        """
         await self.store.record_event(scope, subject_key, event_name)

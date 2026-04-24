@@ -254,6 +254,45 @@ async def test_create_job_enforces_rate_limit(tmp_path: Path) -> None:
         await service.create_job(conversation.id, "127.0.0.1")
 
 
+@pytest.mark.asyncio
+async def test_create_job_uses_separate_ip_rate_limit(tmp_path: Path) -> None:
+    """
+    Verify that client IP limits can be higher than per-conversation limits.
+    """
+    database = SQLiteDatabase(str(tmp_path / "smartour.sqlite3"))
+    conversation_rate_limiter = SimpleRateLimiter(
+        store=SQLiteRateLimitStore(database),
+        max_events=1,
+        window_seconds=3600,
+    )
+    ip_rate_limiter = SimpleRateLimiter(
+        store=SQLiteRateLimitStore(database),
+        max_events=2,
+        window_seconds=3600,
+    )
+    conversation_repository = InMemoryConversationRepository()
+    job_repository = InMemoryItineraryJobRepository()
+    conversations = [
+        Conversation(requirement=_complete_requirement()),
+        Conversation(requirement=_complete_requirement()),
+        Conversation(requirement=_complete_requirement()),
+    ]
+    for conversation in conversations:
+        await conversation_repository.save(conversation)
+    service = ItineraryJobService(
+        conversation_repository=conversation_repository,
+        job_repository=job_repository,
+        planning_service=cast(PlanningService, FakePlanningService()),
+        conversation_rate_limiter=conversation_rate_limiter,
+        ip_rate_limiter=ip_rate_limiter,
+    )
+
+    assert await service.create_job(conversations[0].id, "127.0.0.1") is not None
+    assert await service.create_job(conversations[1].id, "127.0.0.1") is not None
+    with pytest.raises(RateLimitError):
+        await service.create_job(conversations[2].id, "127.0.0.1")
+
+
 def test_job_event_payload_is_json_ready() -> None:
     """
     Verify that job event payloads expose polling-friendly status fields.
