@@ -6,6 +6,7 @@ from functools import lru_cache
 import httpx
 
 from smartour.application.conversation_service import ConversationService
+from smartour.application.planning_service import PlanningService
 from smartour.application.requirement_extractor import (
     RequirementExtractor,
     RuleBasedRequirementExtractor,
@@ -14,6 +15,7 @@ from smartour.core.config import Settings
 from smartour.infrastructure.repositories.conversations import (
     InMemoryConversationRepository,
 )
+from smartour.infrastructure.repositories.itineraries import InMemoryItineraryRepository
 from smartour.integrations.google_maps.client import (
     GoogleMapsClient,
     create_google_maps_client,
@@ -44,6 +46,17 @@ def get_conversation_repository() -> InMemoryConversationRepository:
         The in-memory conversation repository.
     """
     return InMemoryConversationRepository()
+
+
+@lru_cache
+def get_itinerary_repository() -> InMemoryItineraryRepository:
+    """
+    Create the process-local itinerary repository.
+
+    Returns:
+        The in-memory itinerary repository.
+    """
+    return InMemoryItineraryRepository()
 
 
 @lru_cache
@@ -79,6 +92,20 @@ def get_conversation_service() -> ConversationService:
     return ConversationService(
         conversation_repository=get_conversation_repository(),
         requirement_extractor=get_requirement_extractor(),
+    )
+
+
+@lru_cache
+def get_planning_service() -> PlanningService:
+    """
+    Create the planning service.
+
+    Returns:
+        The planning service.
+    """
+    return PlanningService(
+        conversation_repository=get_conversation_repository(),
+        itinerary_repository=get_itinerary_repository(),
     )
 
 

@@ -36,6 +36,7 @@ class GoogleRoutesClient:
         destination_longitude: float,
         travel_mode: str = "DRIVE",
         routing_preference: str | None = "TRAFFIC_AWARE",
+        departure_time: str | None = None,
         field_mask: str = ROUTES_SUMMARY_FIELD_MASK,
     ) -> dict[str, Any]:
         """
@@ -48,6 +49,7 @@ class GoogleRoutesClient:
             destination_longitude: The destination longitude.
             travel_mode: The Google Routes travel mode.
             routing_preference: The optional routing preference.
+            departure_time: The optional RFC3339 UTC departure time.
             field_mask: The Google Routes response field mask.
 
         Returns:
@@ -64,6 +66,8 @@ class GoogleRoutesClient:
         }
         if routing_preference:
             body["routingPreference"] = routing_preference
+        if departure_time:
+            body["departureTime"] = departure_time
         return await self.base_client.post_json(
             "routes", COMPUTE_ROUTES_URL, body, field_mask
         )

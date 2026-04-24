@@ -26,3 +26,9 @@ class ExternalServiceError(SmartourError):
         self.service = service
         self.status_code = status_code
         super().__init__(message)
+
+
+class PlanningInputError(SmartourError):
+    """
+    Error raised when itinerary planning cannot start from current inputs.
+    """

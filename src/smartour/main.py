@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from smartour.api.routes.conversations import router as conversations_router
 from smartour.api.routes.google_maps import router as google_maps_router
 from smartour.api.routes.health import router as health_router
+from smartour.api.routes.itineraries import router as itineraries_router
 
 
 def create_app() -> FastAPI:
@@ -18,6 +19,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Smartour API", version="0.1.0")
     app.include_router(health_router, prefix="/api")
     app.include_router(conversations_router, prefix="/api")
+    app.include_router(itineraries_router, prefix="/api")
     app.include_router(google_maps_router, prefix="/api")
     return app
 
